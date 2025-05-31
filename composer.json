@@ -1,12 +1,5 @@
 {
-  "repositories": [
-    {
-      "type": "vcs",
-      "url": "https://github.com/Airalo/airalo-php-sdk"
-    }
-  ],
   "require": {
-    "airalo/airalo-php-sdk": "dev-main"
-  },
-  "minimum-stability": "dev"
+    "guzzlehttp/guzzle": "^7.0"
+  }
 }
