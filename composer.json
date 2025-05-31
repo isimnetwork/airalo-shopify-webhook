@@ -1,0 +1,5 @@
+{
+  "require": {
+    "airalo/airalo-php-sdk": "^1.0"
+  }
+}
