@@ -1,50 +1,55 @@
 <?php
 require 'vendor/autoload.php';
 
-use Airalo\AiraloClient;
+use GuzzleHttp\Client;
 
-// Get raw POST data from Shopify webhook
-$input = file_get_contents('php://input');
-$orderData = json_decode($input, true);
+// Get secrets from environment variables
+$sharedSecret = getenv('SHOPIFY_API_SECRET');
+$airaloApiKey = getenv('AIRALO_CLIENT_ID');
+$airaloApiSecret = getenv('AIRALO_CLIENT_SECRET');
 
-// Set your Airalo credentials (we'll configure env vars in Railway later)
-$clientId = getenv('AIRALO_CLIENT_ID');
-$clientSecret = getenv('AIRALO_CLIENT_SECRET');
+// Read incoming webhook payload and Shopify HMAC header
+$requestBody = file_get_contents('php://input');
+$hmacHeader = $_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] ?? '';
 
-$airalo = new AiraloClient([
-    'client_id' => $clientId,
-    'client_secret' => $clientSecret,
-]);
-
-// Authenticate to Airalo
-$airalo->authenticate();
-
-// Here you should parse $orderData to get order details (like customer email or order ID)
-// This depends on the Shopify webhook payload structure
-
-// Example: assuming you have the order ID or email, fetch orders from Airalo
-// This is a simplified example; you’ll want to adjust filters to match your data
-$orders = $airalo->orders()->list([
-    // Adjust filter parameters as needed
-    // 'filter[email]' => $orderData['email'],
-]);
-
-if (count($orders) > 0) {
-    $order = $orders[0];
-    $sims = $order['sims'] ?? [];
-    foreach ($sims as $sim) {
-        $iccid = $sim['iccid'];
-        $simDetails = $airalo->sims()->get($iccid);
-
-        // Log or output SIM info (ICCID, CCID, QR code URL)
-        error_log("SIM ICCID: $iccid");
-        error_log("SIM CCID: " . ($simDetails['ccid'] ?? 'N/A'));
-        error_log("SIM QR Code: " . ($simDetails['qr_code'] ?? 'N/A'));
-    }
-} else {
-    error_log("No matching orders found in Airalo for Shopify order.");
+// Verify webhook authenticity
+$calculatedHmac = base64_encode(hash_hmac('sha256', $requestBody, $sharedSecret, true));
+if (!hash_equals($hmacHeader, $calculatedHmac)) {
+    http_response_code(401);
+    echo 'Invalid HMAC';
+    exit;
 }
 
-// Respond with 200 OK to Shopify webhook
+// Decode Shopify order data
+$orderData = json_decode($requestBody, true);
+
+$client = new Client();
+
+foreach ($orderData['line_items'] as $item) {
+    $sku = $item['sku'];
+    $quantity = $item['quantity'];
+    $email = $orderData['email'] ?? '';
+
+    try {
+        $response = $client->request('POST', 'https://partners-api.airalo.com/api/v2/orders', [
+            'headers' => [
+                'X-API-Key' => $airaloApiKey,
+                'X-API-Secret' => $airaloApiSecret,
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ],
+            'json' => [
+                'external_order_id' => $orderData['id'],
+                'package_id' => $sku,
+                'quantity' => $quantity,
+                'email' => $email,
+            ],
+        ]);
+        file_put_contents('airalo_success_log.txt', $response->getBody() . "\n", FILE_APPEND);
+    } catch (Exception $e) {
+        file_put_contents('airalo_error_log.txt', $e->getMessage() . "\n", FILE_APPEND);
+    }
+}
+
 http_response_code(200);
-echo json_encode(['status' => 'success']);
+echo 'Webhook received';
